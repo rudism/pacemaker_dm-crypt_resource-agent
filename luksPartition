@@ -1,0 +1,158 @@
+#!/bin/sh
+
+#######################################################################
+# Initialization:
+
+: ${OCF_FUNCTIONS=${OCF_ROOT}/resource.d/heartbeat/.ocf-shellfuncs}
+. ${OCF_FUNCTIONS}
+: ${__OCF_ACTION=$1}
+
+#######################################################################
+
+meta_data() {
+	cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="luksPartition" version="1.0">
+<version>1.0</version>
+
+<longdesc lang="en">
+LUKS partition resource agent.
+</longdesc>
+<shortdesc lang="en">Open and close a LUKS partition.</shortdesc>
+
+<parameters>
+<parameter name="device" unique="1">
+<longdesc lang="en">
+The device name of the encrypted partition (without /dev/ prefix).
+</longdesc>
+<shortdesc lang="en">Encrypted device name.</shortdesc>
+<content type="string" default="" />
+</parameter>
+
+<parameter name="mapped" unique="1">
+<longdesc lang="en">
+The device name to use for the mapped plaintext volume.
+</longdesc>
+<shortdesc lang="en">Plaintext device name.</shortdesc>
+<content type="string" default="" />
+</parameter>
+
+<parameter name="keyfile" unique="0">
+<longdesc lang="en">
+The path to the keyfile that unlocks the encrypted partition.
+</longdesc>
+<shortdesc lang="en">Path to keyfile.</shortdesc>
+<content type="string" default="" />
+</parameter>
+
+</parameters>
+
+<actions>
+<action name="start"        timeout="20" />
+<action name="stop"         timeout="20" />
+<action name="monitor"      timeout="20" interval="10" depth="0"/>
+<action name="reload"       timeout="20" />
+<action name="migrate_to"   timeout="20" />
+<action name="migrate_from" timeout="20" />
+<action name="validate-all" timeout="20" />
+<action name="meta-data"    timeout="5" />
+</actions>
+</resource-agent>
+END
+}
+
+#######################################################################
+
+# don't exit on TERM, to test that lrmd makes sure that we do exit
+trap sigterm_handler TERM
+sigterm_handler() {
+	ocf_log info "They use TERM to bring us down. No such luck."
+	return
+}
+
+luks_usage() {
+	cat <<END
+usage: $0 {start|stop|monitor|migrate_to|migrate_from|validate-all|meta-data}
+
+Expects to have a fully populated OCF RA-compliant environment set.
+END
+}
+
+luks_start() {
+    luks_monitor
+    if [ $? =  $OCF_SUCCESS ]; then
+	return $OCF_SUCCESS
+    fi
+    cryptsetup -d $OCF_RESKEY_keyfile luksOpen /dev/$OCF_RESKEY_device $OCF_RESKEY_mapped
+    if [ $? != 0 ]; then
+        return $OCF_ERR_GENERIC
+    fi
+    return $OCF_SUCCESS
+}
+
+luks_stop() {
+    luks_monitor
+    if [ $? =  $OCF_SUCCESS ]; then
+        cryptsetup luksClose $OCF_RESKEY_mapped
+        if [ $? != 0 ]; then
+            return $OCF_ERR_GENERIC
+        fi
+    fi
+    return $OCF_SUCCESS
+}
+
+luks_monitor() {
+    # Monitor _MUST!_ differentiate correctly between running
+    # (SUCCESS), failed (ERROR) or _cleanly_ stopped (NOT RUNNING).
+    # That is THREE states, not just yes/no.
+
+    # "Oops." --Rudis
+
+    cryptsetup status $OCF_RESKEY_mapped
+    if [ $? = 0 ]; then
+        return $OCF_SUCCESS
+    fi
+    return $OCF_NOT_RUNNING
+}
+
+luks_validate() {
+    # does the encrypted device exist?
+    lsblk | grep "^$OCF_RESKEY_device\\s" > /dev/null
+    if [ $? != 0 ]; then
+        return $OCF_ERR_ARGS
+    fi
+    return $OCF_SUCCESS
+}
+
+: ${OCF_RESKEY_CRM_meta_interval=0}
+: ${OCF_RESKEY_CRM_meta_globally_unique:="true"}
+
+case $__OCF_ACTION in
+meta-data)	meta_data
+		exit $OCF_SUCCESS
+		;;
+start)		luks_start;;
+stop)		luks_stop;;
+monitor)	luks_monitor;;
+migrate_to)	ocf_log info "Migrating ${OCF_RESOURCE_INSTANCE} to ${OCF_RESKEY_CRM_meta_migrate_target}."
+	        luks_stop
+		;;
+migrate_from)	ocf_log info "Migrating ${OCF_RESOURCE_INSTANCE} to ${OCF_RESKEY_CRM_meta_migrate_source}."
+	        luks_start
+		;;
+reload)		ocf_log err "Reloading..."
+	        luks_start
+		;;
+validate-all)	luks_validate;;
+usage|help)	luks_usage
+		exit $OCF_SUCCESS
+		;;
+*)		luks_usage
+		exit $OCF_ERR_UNIMPLEMENTED
+		;;
+esac
+rc=$?
+ocf_log debug "${OCF_RESOURCE_INSTANCE} $__OCF_ACTION : $rc"
+exit $rc
+
