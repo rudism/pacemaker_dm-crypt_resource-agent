@@ -122,6 +122,10 @@ luks_validate() {
     if [ $? != 0 ]; then
         return $OCF_ERR_ARGS
     fi
+    # does the keyfile exist?
+    if [ !-f $OCF_RESKEY_keyfile ]; then
+        return $OCF_ERR_ARGS
+    fi
     return $OCF_SUCCESS
 }
 
