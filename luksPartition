@@ -46,6 +46,14 @@ The path to the keyfile that unlocks the encrypted partition.
 <content type="string" default="" />
 </parameter>
 
+<parameter name="keyscript" unique="0">
+<longdesc lang="en">
+The path to a script that provides a key that unlocks the encrypted partition.
+</longdesc>
+<shortdesc lang="en">Path to keyscript.</shortdesc>
+<content type="string" default="" />
+</parameter>
+
 </parameters>
 
 <actions>
@@ -84,7 +92,13 @@ luks_start() {
     if [ $? =  $OCF_SUCCESS ]; then
 	return $OCF_SUCCESS
     fi
-    cryptsetup -d $OCF_RESKEY_keyfile luksOpen /dev/$OCF_RESKEY_device $OCF_RESKEY_mapped
+    if [ -n "$OCF_RESKEY_keyfile" ]; then
+        cryptsetup -d $OCF_RESKEY_keyfile luksOpen /dev/$OCF_RESKEY_device $OCF_RESKEY_mapped
+    elif [ -n "$OCF_RESKEY_keyscript" ]; then
+        "$OCF_RESKEY_keyscript" | cryptsetup -d - luksOpen /dev/$OCF_RESKEY_device $OCF_RESKEY_mapped
+    else
+        return $OCF_ERR_ARGS
+    fi
     if [ $? != 0 ]; then
         return $OCF_ERR_GENERIC
     fi
@@ -122,8 +136,16 @@ luks_validate() {
     if [ $? != 0 ]; then
         return $OCF_ERR_ARGS
     fi
+    # is a keyfile or keyscript passed?
+    if [ -z "$OCF_RESKEY_keyfile" ] && [ -z "$OCF_RESKEY_keyscript" ]; then
+        return $OCF_ERR_ARGS
+    fi
     # does the keyfile exist?
-    if [ !-f $OCF_RESKEY_keyfile ]; then
+    if [ -n "$OCF_RESKEY_keyfile" ] && [ !-f $OCF_RESKEY_keyfile ]; then
+        return $OCF_ERR_ARGS
+    fi
+    # does the keyscript exist?
+    if [ -n "$OCF_RESKEY_keyscript" ] && [ !-f $OCF_RESKEY_keyscript ]; then
         return $OCF_ERR_ARGS
     fi
     return $OCF_SUCCESS
